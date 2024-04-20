@@ -95,8 +95,12 @@
 #endif
 
 #if USE_SDL || USE_SDL_GPU
-#  define SDL_HOR_RES     320
-#  define SDL_VER_RES     240
+// landscape
+//#  define SDL_HOR_RES     320
+//#  define SDL_VER_RES     240
+// portrait
+#  define SDL_HOR_RES     240
+#  define SDL_VER_RES     320
 
 /* Scale window by this factor (useful when simulating small screens) */
 #  define SDL_ZOOM        1

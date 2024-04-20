@@ -18,7 +18,11 @@ add_subdirectory(lv_drivers)
 
 SET(EXECUTABLE_OUTPUT_PATH ${PROJECT_BINARY_DIR}/bin)
 
-add_executable(main main.c mouse_cursor_icon.c
+add_executable(main
+        main.c
+        main_singlepage.c
+        main_tabbed_3meter.c
+        mouse_cursor_icon.c
         fonts/rubik_12.c
         fonts/rubik_12_subpx.c
         fonts/rubik_18.c

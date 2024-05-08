@@ -1,37 +1,72 @@
 #define LV_USE_SDL 1
 #include <lvgl.h>
 #include <unistd.h>
+#include <stdlib.h>
+#include "lv_drivers/sdl/sdl.h"
 
-static lv_display_t * hal_init(int32_t w, int32_t h)
+#define USE_ANIMATION   0
+
+static lv_disp_t * hal_init(int32_t w, int32_t h)
 {
-    lv_group_set_default(lv_group_create());
-    
-    lv_display_t * disp = lv_sdl_window_create(w, h);
-    
-    lv_indev_t * mouse = lv_sdl_mouse_create();
-    lv_indev_set_group(mouse, lv_group_get_default());
-    lv_indev_set_display(mouse, disp);
-    lv_display_set_default(disp);
-    
-    LV_IMAGE_DECLARE(mouse_cursor_icon); /*Declare the image file.*/
-    lv_obj_t * cursor_obj;
-    cursor_obj = lv_image_create(lv_screen_active()); /*Create an image object for the cursor */
-    lv_image_set_src(cursor_obj, &mouse_cursor_icon);           /*Set the image source*/
-    lv_indev_set_cursor(mouse, cursor_obj);             /*Connect the image  object to the driver*/
-    
-    lv_indev_t * mousewheel = lv_sdl_mousewheel_create();
-    lv_indev_set_display(mousewheel, disp);
-    
-    lv_indev_t * keyboard = lv_sdl_keyboard_create();
-    lv_indev_set_display(keyboard, disp);
-    lv_indev_set_group(keyboard, lv_group_get_default());
-    
-    return disp;
+    /* Use the 'monitor' driver which creates window on PC's monitor to simulate a display*/
+    sdl_init();
+
+    /*Create a display buffer*/
+    static lv_disp_draw_buf_t disp_buf1;
+    static lv_color_t buf1_1[SDL_HOR_RES * 100];
+    lv_disp_draw_buf_init( &disp_buf1, buf1_1, NULL, SDL_HOR_RES * 100 );
+
+    /*Create a display*/
+    static lv_disp_drv_t disp_drv;
+    lv_disp_drv_init( &disp_drv ); /*Basic initialization*/
+    disp_drv.draw_buf = &disp_buf1;
+    disp_drv.flush_cb = sdl_display_flush;
+    disp_drv.hor_res = SDL_HOR_RES;
+    disp_drv.ver_res = SDL_VER_RES;
+
+    lv_disp_t *disp = lv_disp_drv_register( &disp_drv );
+
+    lv_theme_t *th = lv_theme_default_init( disp, lv_palette_main( LV_PALETTE_BLUE ), lv_palette_main( LV_PALETTE_RED ),
+                                            LV_THEME_DEFAULT_DARK, LV_FONT_DEFAULT );
+    lv_disp_set_theme( disp, th );
+
+    lv_group_t *g = lv_group_create();
+    lv_group_set_default( g );
+
+    /* Add the mouse as input device
+     * Use the 'mouse' driver which reads the PC's mouse*/
+    static lv_indev_drv_t indev_drv_1;
+    lv_indev_drv_init( &indev_drv_1 ); /*Basic initialization*/
+    indev_drv_1.type = LV_INDEV_TYPE_POINTER;
+
+    /*This function will be called periodically (by the library) to get the mouse position and state*/
+    indev_drv_1.read_cb = sdl_mouse_read;
+    lv_indev_t *mouse_indev = lv_indev_drv_register( &indev_drv_1 );
+
+    static lv_indev_drv_t indev_drv_2;
+    lv_indev_drv_init( &indev_drv_2 ); /*Basic initialization*/
+    indev_drv_2.type = LV_INDEV_TYPE_KEYPAD;
+    indev_drv_2.read_cb = sdl_keyboard_read;
+    lv_indev_t *kb_indev = lv_indev_drv_register( &indev_drv_2 );
+    lv_indev_set_group( kb_indev, g );
+
+    static lv_indev_drv_t indev_drv_3;
+    lv_indev_drv_init( &indev_drv_3 ); /*Basic initialization*/
+    indev_drv_3.type = LV_INDEV_TYPE_ENCODER;
+    indev_drv_3.read_cb = sdl_mousewheel_read;
+    lv_indev_t *enc_indev = lv_indev_drv_register( &indev_drv_3 );
+    lv_indev_set_group( enc_indev, g );
+
+    /*Set a cursor for the mouse*/
+    LV_IMG_DECLARE( mouse_cursor_icon ); /*Declare the image file.*/
+    lv_obj_t *cursor_obj = lv_img_create( lv_scr_act()); /*Create an image object for the cursor */
+    lv_img_set_src( cursor_obj, &mouse_cursor_icon );           /*Set the image source*/
+    lv_indev_set_cursor( mouse_indev, cursor_obj );             /*Connect the image  object to the driver*/
 }
 
 void setup_screen() {
     static lv_style_t style_screen;
-    lv_obj_t *screen = lv_screen_active();
+    lv_obj_t *screen = lv_scr_act();
     
     lv_style_init(&style_screen);
     lv_color_t color_bg_top = LV_COLOR_MAKE(70,75,85);
@@ -48,6 +83,7 @@ typedef struct {
 } user_data_t;
 
 static lv_style_t style_bar_background;
+static lv_style_t style_image;
 static lv_style_t style_label;
 static lv_style_t style_indic_battery;
 static lv_style_t style_indic_battery_charge;
@@ -59,6 +95,7 @@ static lv_style_t style_indic_water_empty;
 static lv_style_t style_indic_fuel;
 static lv_style_t style_indic_fuel_empty;
 static lv_color_t color_indic_empty = LV_COLOR_MAKE(0xF4, 0x43, 0x36);
+static lv_color_t color_label = LV_COLOR_MAKE( 255, 255, 255);
 
 static lv_obj_t * bar_water;
 static lv_obj_t * bar_fuel;
@@ -79,21 +116,22 @@ static lv_obj_t * bar_battery[3];
 #define BATTERY_VOLTAGE_WARN_HIGH  147
 #define BATTERY_VOLTAGE_END        150
 
-LV_IMAGE_DECLARE(img_battery);
-LV_IMAGE_DECLARE(img_battery_engine);
-LV_IMAGE_DECLARE(img_fuel);
-LV_IMAGE_DECLARE(img_water);
+LV_IMG_DECLARE(img_battery);
+LV_IMG_DECLARE(img_battery_engine);
+LV_IMG_DECLARE(img_fuel);
+LV_IMG_DECLARE(img_water);
 
 //extern lv_font_t rubik_12;
 //extern lv_font_t rubik_12_subpx;
 
+LV_FONT_DECLARE( lv_font_montserrat_12 )
+
 static void set_style(void * bar,lv_style_t* style) {
     user_data_t * user_data = lv_obj_get_user_data(bar);
-    if ( user_data->current_style == NULL) {
-        lv_obj_add_style( bar, style, LV_PART_INDICATOR );
-    } else {
-        lv_obj_replace_style(bar,user_data->current_style, style, LV_PART_INDICATOR);
+    if ( user_data->current_style != NULL ) {
+        lv_obj_remove_style( bar, user_data->current_style, LV_PART_INDICATOR );
     }
+    lv_obj_add_style( bar, style, LV_PART_INDICATOR );
     user_data->current_style=style;
 }
 
@@ -109,8 +147,8 @@ static void setup_bar_background_style() {
     lv_style_set_outline_color( &style_bar_background, color_outline);
     lv_style_set_outline_width( &style_bar_background,STYLE_BAR_OUTLINE );
     lv_style_set_shadow_color( &style_bar_background, color_shadow);
-    lv_style_set_shadow_offset_x( &style_bar_background, 10);
-    lv_style_set_shadow_offset_y( &style_bar_background, 10);
+    lv_style_set_shadow_ofs_x( &style_bar_background, 10);
+    lv_style_set_shadow_ofs_y( &style_bar_background, 10);
 //    lv_style_set_shadow_width(&style_bar_background, 10);
 }
 
@@ -151,8 +189,8 @@ lv_obj_t * setup_water_bar( lv_obj_t *parent, int y0) {
     lv_bar_set_range(bar, 0, 100+STYLE_BAR_EMPTY_STATE);
     lv_bar_set_value(bar, 0, LV_ANIM_OFF);
     
-    lv_obj_t * icon = lv_image_create(parent);
-    lv_image_set_src(icon, &img_water);
+    lv_obj_t * icon = lv_img_create(parent);
+    lv_img_set_src(icon, &img_water);
     lv_obj_set_pos( icon, STYLE_IMAGE_X, y0 + STYLE_BAR_PADDING);
     
     return bar;
@@ -179,11 +217,13 @@ lv_obj_t * setup_fuel_bar( lv_obj_t *parent, int y0) {
     lv_bar_set_range(bar, 0, 100+STYLE_BAR_EMPTY_STATE);
     lv_bar_set_value(bar, 0, LV_ANIM_OFF);
     
-    lv_obj_t * icon = lv_image_create(parent);
-    lv_image_set_src(icon, &img_fuel);
+    lv_obj_t * icon = lv_img_create(parent);
+    lv_img_set_src(icon, &img_fuel);
+    lv_obj_add_style( icon, &style_image, LV_PART_MAIN);
+//    lv_obj_set_style_img_recolor_opa(icon, LV_OPA_MAX, LV_PART_MAIN);
+//    lv_obj_set_style_img_recolor(icon, color_label, LV_PART_MAIN);
     lv_obj_set_pos( icon, STYLE_IMAGE_X, y0 + STYLE_BAR_PADDING);
-    
-    
+
     return bar;
 }
 
@@ -226,16 +266,20 @@ lv_obj_t * setup_battery_bar( lv_obj_t *parent, int y0, int index) {
     lv_bar_set_range(bar, BATTERY_VOLTAGE_START, BATTERY_VOLTAGE_END);
     lv_bar_set_value(bar, BATTERY_VOLTAGE_END, LV_ANIM_OFF);
     
-    lv_obj_t * icon = lv_image_create(parent);
-    lv_image_set_src(icon, index == 0 ? &img_battery_engine : &img_battery);
+    lv_obj_t * icon = lv_img_create(parent);
+    lv_img_set_src(icon, index == 0 ? &img_battery_engine : &img_battery);
     lv_obj_set_pos( icon, STYLE_IMAGE_X, y0 );
     
     return bar;
 }
 
+void setup_image_style() {
+    lv_style_init(&style_image);
+    lv_style_set_img_recolor_opa(&style_image,LV_OPA_MAX);
+    lv_style_set_img_recolor(&style_image,  color_label);
+}
+
 void setup_label_style() {
-    lv_color_t color_label = LV_COLOR_MAKE( 255, 255, 255);
-    
     lv_style_init(&style_label);
     lv_style_set_text_color( &style_label, color_label);
 //    lv_style_set_text_font(&style_label, &rubik_12);
@@ -267,7 +311,7 @@ lv_obj_t * setup_battery_label( lv_obj_t* parent, int y0) {
         label = lv_label_create( parent );
         lv_snprintf(label_text, sizeof (label_text), "%d", start+i);
         lv_label_set_text(label, label_text);
-        lv_obj_set_pos( label, (int)(y0 + i * multiplier), y0);
+        lv_obj_set_pos( label, (int)(x0 + i * multiplier), y0);
         lv_obj_add_style( label, &style_label, LV_PART_MAIN);
     }
     // TODO add line for halves
@@ -348,8 +392,8 @@ void setup_animation_step( lv_obj_t* bar, lv_anim_exec_xcb_t setter ) {
     lv_anim_t anim;
     lv_anim_init(&anim);
     lv_anim_set_exec_cb( &anim, setter);
-    lv_anim_set_duration( &anim, 5000);
-    lv_anim_set_playback_duration(&anim, 5000);
+    lv_anim_set_time( &anim, 5000);
+    lv_anim_set_playback_time(&anim, 5000);
     lv_anim_set_var( &anim, bar);
     lv_anim_set_values( &anim, 0, 5);
 //    lv_anim_set_repeat_count(&anim, LV_ANIM_REPEAT_INFINITE);
@@ -362,8 +406,8 @@ void setup_animation_fuel( lv_obj_t* bar, lv_anim_exec_xcb_t setter ) {
     lv_anim_t anim;
     lv_anim_init(&anim);
     lv_anim_set_exec_cb( &anim, setter);
-    lv_anim_set_duration( &anim, 5000);
-    lv_anim_set_playback_duration(&anim, 5000);
+    lv_anim_set_time( &anim, 5000);
+    lv_anim_set_playback_time(&anim, 5000);
     lv_anim_set_var( &anim, bar);
     lv_anim_set_values( &anim, 0, 100+STYLE_BAR_EMPTY_STATE);
 //    lv_anim_set_repeat_count(&anim, LV_ANIM_REPEAT_INFINITE);
@@ -376,8 +420,8 @@ void setup_animation_battery( lv_obj_t* bar, lv_anim_exec_xcb_t setter ) {
     lv_anim_t anim;
     lv_anim_init(&anim);
     lv_anim_set_exec_cb( &anim, setter);
-    lv_anim_set_duration( &anim, 3000);
-    lv_anim_set_playback_duration(&anim, 3000);
+    lv_anim_set_time( &anim, 3000);
+    lv_anim_set_playback_time(&anim, 3000);
     lv_anim_set_var( &anim, bar);
     lv_anim_set_values( &anim, BATTERY_VOLTAGE_START, BATTERY_VOLTAGE_END);
     lv_anim_set_repeat_count(&anim, LV_ANIM_REPEAT_INFINITE);
@@ -397,11 +441,12 @@ int main( int argc, char **argv ) {
     
     setup_screen();
     setup_bar_background_style();
+    setup_image_style();
     setup_label_style();
     setup_battery_style();
-    
-    
-    lv_obj_t *screen = lv_screen_active();
+
+
+    lv_obj_t *screen = lv_scr_act();
     lv_obj_t * prev;
     prev = bar_water= setup_water_bar( screen, STYLE_BAR_HEIGHT * 3 / 2 );
     setup_fluid_label( screen, obj_get_bottom(prev)  +STYLE_BAR_OUTLINE);
@@ -411,12 +456,20 @@ int main( int argc, char **argv ) {
     prev = bar_battery[1]=setup_battery_bar( screen, obj_get_bottom(prev) + STYLE_BAR_HEIGHT+STYLE_BAR_OUTLINE, 1 );
     setup_battery_label(screen, obj_get_bottom(prev)+STYLE_BAR_OUTLINE );
     bar_battery[2]=setup_battery_bar( screen, obj_get_bottom(prev) + STYLE_BAR_HEIGHT, 2 );
-    
+
+#if USE_ANIMATION
     setup_animation_step( bar_water , set_water_value);
     setup_animation_fuel( bar_fuel, set_fuel_value );
     for( int i = 0; i< 3; i++) {
         setup_animation_battery( bar_battery[i], set_battery_value );
     }
+#else
+    set_water_value( bar_water, 3 );
+    set_fuel_value( bar_fuel, 45 );
+    set_battery_value( bar_battery[ 0 ], 105 );
+    set_battery_value( bar_battery[ 1 ], 120 );
+    set_battery_value( bar_battery[ 2 ], 140 );
+#endif
 
     while (true) {
         uint32_t ms_delay = lv_timer_handler();
